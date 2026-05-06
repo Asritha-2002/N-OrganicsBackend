@@ -39,6 +39,7 @@ const sendVerificationEmail = async (email, verificationToken) => {
     to: email,
     subject: "Email Verification",
     html: `
+    <img src="${process.env.COMPANY_LOGO}" alt="Logo" style="width: 150px; height: auto;"/>
       <h2>Verify your email address</h2>
       <p>Click the link below to verify your email:</p>
       <a href="${verifyLink}">Verify Email</a>
@@ -59,6 +60,7 @@ const sendPasswordResetEmail = async (email, resetToken) => {
     to: email,
     subject: 'Reset Your Password - ' + process.env.COMPANY_NAME,
     html: `
+     <img src="${process.env.COMPANY_LOGO}" alt="Logo" style="width: 150px; height: auto;"/>
       <h1>Reset Your Password</h1>
       <p>Please click the link below to reset your password:</p>
       <a href="${process.env.BASE_URL}forgot-password-reset?token=${resetToken}">
