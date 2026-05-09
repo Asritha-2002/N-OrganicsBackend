@@ -52,8 +52,6 @@ router.post(
 
 router.get(
   '/admin/announcement-bar',
-  auth,
-  adminAuth,
   async (req, res) => {
     try {
       const bars = await AnnouncementBar.find().sort({ createdAt: -1 });

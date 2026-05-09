@@ -1,21 +1,22 @@
-const cloudinary = require('cloudinary').v2;
-const streamifier = require('streamifier');
+const cloudinary = require("cloudinary").v2;
+const streamifier = require("streamifier");
 
-// Configure Cloudinary
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET
+  api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
 /**
- * Uploads an image buffer to Cloudinary.
+ * Uploads a file buffer to Cloudinary with options.
  * @param {Buffer} buffer - The file buffer from multer.
+ * @param {Object} options - Cloudinary upload options (e.g., { resource_type: "video", folder: "..." })
  * @returns {Promise<Object>} - The Cloudinary upload result.
  */
-const uploadImageToCloudinary = (buffer) => {
+const uploadImageToCloudinary = (buffer, options = {}) => {
   return new Promise((resolve, reject) => {
     const uploadStream = cloudinary.uploader.upload_stream(
+      options, // 👈 pass options here
       (error, result) => {
         if (error) {
           return reject(error);
@@ -23,13 +24,12 @@ const uploadImageToCloudinary = (buffer) => {
         resolve(result);
       }
     );
-    
-    // Create a readable stream from the buffer and pipe it to Cloudinary
+
     streamifier.createReadStream(buffer).pipe(uploadStream);
   });
 };
 
-module.exports = { 
-  cloudinary, 
-  uploadImageToCloudinary 
+module.exports = {
+  cloudinary,
+  uploadImageToCloudinary,
 };

@@ -12,124 +12,368 @@ const storage = multer.memoryStorage();
 const upload = multer({ storage });
 
 router.post(
-  '/admin/banners',
+  "/admin/banners",
   auth,
   adminAuth,
-  upload.single('image'), // Matches the name="image" file input
+  upload.single("image"),
   async (req, res) => {
     try {
       const bannerData = { ...req.body };
 
-      // Parse JSON elements and arrays
-      if (bannerData.appliesTo === 'products' && typeof bannerData.productIds === 'string') {
-        bannerData.productIds = bannerData.productIds.split(',').map((id) => new mongoose.Types.ObjectId(id.trim()));
-      } else {
-        bannerData.productIds = [];
+      const normalizeStringArray = (input) => {
+        if (!input) return [];
+
+        if (Array.isArray(input)) {
+          return input
+            .map((item) => String(item).trim())
+            .filter(Boolean);
+        }
+
+        if (typeof input === "string") {
+          try {
+            const parsed = JSON.parse(input);
+
+            if (Array.isArray(parsed)) {
+              return parsed
+                .map((item) => String(item).trim())
+                .filter(Boolean);
+            }
+          } catch (err) {}
+
+          return input
+            .split(",")
+            .map((item) => item.trim())
+            .filter(Boolean);
+        }
+
+        return [];
+      };
+
+      if (!["all", "products", "category"].includes(bannerData.appliesTo)) {
+        bannerData.appliesTo = "all";
       }
 
-      if (bannerData.appliesTo === 'category' && typeof bannerData.categoryIds === 'string') {
-        bannerData.categoryIds = bannerData.categoryIds.split(',').map((id) => new mongoose.Types.ObjectId(id.trim()));
+      if (bannerData.appliesTo === "products") {
+        bannerData.productIds = normalizeStringArray(bannerData.productIds);
+        bannerData.categoryIds = [];
+      } else if (bannerData.appliesTo === "category") {
+        bannerData.categoryIds = normalizeStringArray(bannerData.categoryIds);
+        bannerData.productIds = [];
       } else {
+        bannerData.productIds = [];
         bannerData.categoryIds = [];
       }
 
-      // Convert number strings to proper types
-      bannerData.discount = Number(bannerData.discount);
-      bannerData.perUserLimit = Number(bannerData.perUserLimit);
-      if (bannerData.maxUses) bannerData.maxUses = Number(bannerData.maxUses);
-      
-      // Convert boolean string from FormData (sent as "true" / "false") to boolean
-      bannerData.isActive = bannerData.isActive === 'true' || bannerData.isActive === true;
+      if (
+        bannerData.appliesTo === "products" &&
+        bannerData.productIds.length === 0
+      ) {
+        return res.status(400).json({
+          message: "productIds cannot be empty when appliesTo is 'products'",
+        });
+      }
 
-      // Handle Image Upload
+      if (
+        bannerData.appliesTo === "category" &&
+        bannerData.categoryIds.length === 0
+      ) {
+        return res.status(400).json({
+          message: "categoryIds cannot be empty when appliesTo is 'category'",
+        });
+      }
+
+      bannerData.discount = Number(bannerData.discount);
+      if (Number.isNaN(bannerData.discount)) {
+        return res.status(400).json({ message: "Discount must be a valid number" });
+      }
+
+      bannerData.perUserLimit = Number(bannerData.perUserLimit);
+      if (Number.isNaN(bannerData.perUserLimit)) {
+        return res.status(400).json({ message: "perUserLimit must be a valid number" });
+      }
+
+      if (
+        bannerData.maxUses === "" ||
+        bannerData.maxUses === null ||
+        bannerData.maxUses === undefined
+      ) {
+        bannerData.maxUses = null;
+      } else {
+        bannerData.maxUses = Number(bannerData.maxUses);
+        if (Number.isNaN(bannerData.maxUses)) {
+          return res.status(400).json({ message: "maxUses must be a valid number" });
+        }
+      }
+
+      if (bannerData.priority !== undefined) {
+        bannerData.priority = Number(bannerData.priority);
+        if (Number.isNaN(bannerData.priority)) {
+          return res.status(400).json({ message: "priority must be a valid number" });
+        }
+      }
+
+      bannerData.isActive =
+        bannerData.isActive === "true" || bannerData.isActive === true;
+
+      if (bannerData.startDate) {
+        const startDate = new Date(bannerData.startDate);
+        if (Number.isNaN(startDate.getTime())) {
+          return res.status(400).json({ message: "Invalid startDate" });
+        }
+        bannerData.startDate = startDate;
+      }
+
+      if (bannerData.endDate) {
+        const endDate = new Date(bannerData.endDate);
+        if (Number.isNaN(endDate.getTime())) {
+          return res.status(400).json({ message: "Invalid endDate" });
+        }
+        bannerData.endDate = endDate;
+      }
+
+      if (bannerData.endDate <= bannerData.startDate) {
+        return res.status(400).json({ message: "endDate must be after startDate" });
+      }
+
+      if (
+        bannerData.discountType === "percentage" &&
+        bannerData.discount > 100
+      ) {
+        return res.status(400).json({
+          message: "Percentage discount cannot exceed 100",
+        });
+      }
+
       if (req.file) {
         const uploadResult = await uploadImageToCloudinary(req.file.buffer);
+
         bannerData.image = {
           url: uploadResult.url,
-          public_id: uploadResult.public_id,
+          altText: req.body.altText || "",
         };
       } else {
-        return res.status(400).json({ message: 'Banner image is required' });
+        return res.status(400).json({ message: "Banner image is required" });
       }
 
       const newBanner = new Banner(bannerData);
       await newBanner.save();
 
-      res.status(201).json(newBanner);
+      return res.status(201).json({
+        success: true,
+        message: "Banner created successfully",
+        data: newBanner,
+      });
     } catch (error) {
-      console.error('Error creating banner:', error);
-      res.status(400).json({ message: error.message });
+      console.error("Error creating banner:", error);
+      return res.status(400).json({
+        success: false,
+        message: error.message || "Failed to create banner",
+      });
     }
   }
 );
 
 router.put(
-  '/admin/banners/:id',
+  "/admin/banners/:id",
   auth,
   adminAuth,
-  upload.single('image'),
+  upload.single("image"),
   async (req, res) => {
     try {
-      const banner = await Banner.findById(req.params.id);
+      const { id } = req.params;
+
+      if (!mongoose.Types.ObjectId.isValid(id)) {
+        return res.status(400).json({ message: "Invalid banner ID" });
+      }
+
+      const banner = await Banner.findById(id);
       if (!banner) {
-        return res.status(404).json({ message: 'Banner not found' });
+        return res.status(404).json({ message: "Banner not found" });
       }
 
       const updateData = { ...req.body };
 
-      // Normalize appliesTo options and target IDs
-      if (updateData.appliesTo === 'products' && typeof updateData.productIds === 'string') {
-        updateData.productIds = updateData.productIds
-          .split(',')
-          .map((id) => new mongoose.Types.ObjectId(id.trim()));
-      } else {
-        updateData.productIds = [];
+      const normalizeStringArray = (input) => {
+        if (!input) return [];
+
+        if (Array.isArray(input)) {
+          return input
+            .map((item) => String(item).trim())
+            .filter(Boolean);
+        }
+
+        if (typeof input === "string") {
+          try {
+            const parsed = JSON.parse(input);
+
+            if (Array.isArray(parsed)) {
+              return parsed
+                .map((item) => String(item).trim())
+                .filter(Boolean);
+            }
+          } catch (err) {}
+
+          return input
+            .split(",")
+            .map((item) => item.trim())
+            .filter(Boolean);
+        }
+
+        return [];
+      };
+
+      if (!["all", "products", "category"].includes(updateData.appliesTo)) {
+        updateData.appliesTo = banner.appliesTo;
       }
 
-      if (updateData.appliesTo === 'category' && typeof updateData.categoryIds === 'string') {
-        updateData.categoryIds = updateData.categoryIds
-          .split(',')
-          .map((id) => new mongoose.Types.ObjectId(id.trim()));
+      if (updateData.appliesTo === "products") {
+        updateData.productIds = normalizeStringArray(updateData.productIds);
+        updateData.categoryIds = [];
+      } else if (updateData.appliesTo === "category") {
+        updateData.categoryIds = normalizeStringArray(updateData.categoryIds);
+        updateData.productIds = [];
       } else {
+        updateData.productIds = [];
         updateData.categoryIds = [];
       }
 
-      // Type castings
-      updateData.discount = Number(updateData.discount);
-      updateData.perUserLimit = Number(updateData.perUserLimit);
-      if (updateData.maxUses) updateData.maxUses = Number(updateData.maxUses);
-      updateData.isActive = updateData.isActive === 'true' || updateData.isActive === true;
+      if (
+        updateData.appliesTo === "products" &&
+        updateData.productIds.length === 0
+      ) {
+        return res.status(400).json({
+          message: "productIds cannot be empty when appliesTo is 'products'",
+        });
+      }
 
-      // 🔥 IMAGE HANDLING FIX
+      if (
+        updateData.appliesTo === "category" &&
+        updateData.categoryIds.length === 0
+      ) {
+        return res.status(400).json({
+          message: "categoryIds cannot be empty when appliesTo is 'category'",
+        });
+      }
+
+      if (updateData.discount !== undefined) {
+        updateData.discount = Number(updateData.discount);
+        if (Number.isNaN(updateData.discount)) {
+          return res.status(400).json({ message: "Discount must be a valid number" });
+        }
+      }
+
+      if (updateData.perUserLimit !== undefined) {
+        updateData.perUserLimit = Number(updateData.perUserLimit);
+        if (Number.isNaN(updateData.perUserLimit)) {
+          return res.status(400).json({ message: "perUserLimit must be a valid number" });
+        }
+      }
+
+      if (updateData.priority !== undefined) {
+        updateData.priority = Number(updateData.priority);
+        if (Number.isNaN(updateData.priority)) {
+          return res.status(400).json({ message: "priority must be a valid number" });
+        }
+      }
+
+      if (
+        updateData.maxUses === "" ||
+        updateData.maxUses === null ||
+        updateData.maxUses === undefined
+      ) {
+        updateData.maxUses = null;
+      } else {
+        updateData.maxUses = Number(updateData.maxUses);
+        if (Number.isNaN(updateData.maxUses)) {
+          return res.status(400).json({ message: "maxUses must be a valid number" });
+        }
+      }
+
+      if (updateData.usedCount !== undefined) {
+        updateData.usedCount = Number(updateData.usedCount);
+        if (Number.isNaN(updateData.usedCount)) {
+          return res.status(400).json({ message: "usedCount must be a valid number" });
+        }
+      }
+
+      if (updateData.isActive !== undefined) {
+        updateData.isActive =
+          updateData.isActive === true || updateData.isActive === "true";
+      }
+
+      if (updateData.startDate !== undefined) {
+        const startDate = new Date(updateData.startDate);
+        if (Number.isNaN(startDate.getTime())) {
+          return res.status(400).json({ message: "Invalid startDate" });
+        }
+        updateData.startDate = startDate;
+      }
+
+      if (updateData.endDate !== undefined) {
+        const endDate = new Date(updateData.endDate);
+        if (Number.isNaN(endDate.getTime())) {
+          return res.status(400).json({ message: "Invalid endDate" });
+        }
+        updateData.endDate = endDate;
+      }
+
+      const effectiveStartDate = updateData.startDate || banner.startDate;
+      const effectiveEndDate = updateData.endDate || banner.endDate;
+
+      if (effectiveEndDate <= effectiveStartDate) {
+        return res.status(400).json({ message: "endDate must be after startDate" });
+      }
+
+      const effectiveDiscountType = updateData.discountType || banner.discountType;
+      const effectiveDiscount =
+        updateData.discount !== undefined ? updateData.discount : banner.discount;
+
+      if (effectiveDiscountType === "percentage" && effectiveDiscount > 100) {
+        return res.status(400).json({
+          message: "Percentage discount cannot exceed 100",
+        });
+      }
+
+      const existingAltText = banner.image?.altText || "";
+
       if (req.file) {
-        // New image uploaded
         const uploadResult = await uploadImageToCloudinary(req.file.buffer);
-
-        // Optional: delete old image
-        // await cloudinary.uploader.destroy(banner.image.public_id);
 
         updateData.image = {
           url: uploadResult.url,
-          public_id: uploadResult.public_id,
+          altText: req.body.altText || existingAltText,
         };
       } else {
-        // ✅ No new image → keep old image
-        updateData.image = banner.image;
+        updateData.image = {
+          ...(banner.image?.toObject?.() || banner.image || {}),
+          altText: req.body.altText || existingAltText,
+        };
       }
 
       const updatedBanner = await Banner.findByIdAndUpdate(
-        req.params.id,
+        id,
         { $set: updateData },
-        { new: true, runValidators: true }
+        {
+          returnDocument: "after",
+          runValidators: true,
+        }
       );
 
-      res.json(updatedBanner);
+      return res.status(200).json({
+        success: true,
+        message: "Banner updated successfully",
+        data: updatedBanner,
+      });
     } catch (error) {
-      console.error('Error updating banner:', error);
-      res.status(400).json({ message: error.message });
+      console.error("Error updating banner:", error);
+      return res.status(400).json({
+        success: false,
+        message: error.message || "Failed to update banner",
+      });
     }
   }
 );
+
 
 router.get('/admin/banners', async (req, res) => {
   try {

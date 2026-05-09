@@ -2,6 +2,7 @@ const mongoose = require("mongoose");
 
 const bannerSchema = new mongoose.Schema(
   {
+    // ─── Frontend display ───────────────────────────────────────────
     title: {
       type: String,
       required: [true, "Banner title is required"],
@@ -23,16 +24,11 @@ const bannerSchema = new mongoose.Schema(
     },
 
     image: {
-      url: {
-        type: String,
-        required: [true, "Banner image URL is required"],
-      },
-      altText: {
-        type: String,
-        default: "",
-      },
+      url: { type: String, required: [true, "Banner image URL is required"] },
+      altText: { type: String, default: "" },
     },
 
+    // ─── Discount ───────────────────────────────────────────────────
     discount: {
       type: Number,
       required: [true, "Discount value is required"],
@@ -48,6 +44,7 @@ const bannerSchema = new mongoose.Schema(
       required: [true, "Discount type is required"],
     },
 
+    // ─── Product targeting ──────────────────────────────────────────
     appliesTo: {
       type: String,
       enum: {
@@ -57,16 +54,19 @@ const bannerSchema = new mongoose.Schema(
       default: "all",
     },
 
-    productIds: {
-      type: [String],
-      default: [],
-    },
+    productIds: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Product",
+      },
+    ],
 
     categoryIds: {
-      type: [String],
-      default: [],
-    },
+  type: [String],
+  default: [],
+},
 
+    // ─── Validity ───────────────────────────────────────────────────
     startDate: {
       type: Date,
       required: [true, "Start date is required"],
@@ -82,9 +82,10 @@ const bannerSchema = new mongoose.Schema(
       default: true,
     },
 
+    // ─── Usage limits ───────────────────────────────────────────────
     maxUses: {
       type: Number,
-      default: null,
+      default: null, // null = unlimited
       min: [1, "maxUses must be at least 1 if set"],
     },
 
@@ -96,30 +97,34 @@ const bannerSchema = new mongoose.Schema(
 
     perUserLimit: {
       type: Number,
-      default: 1,
+      default: 1, // 1 use per user by default
       min: [1, "perUserLimit must be at least 1"],
     },
 
+    // ─── Display order & priority ───────────────────────────────────
     priority: {
       type: Number,
-      default: 0,
+      default: 0, // higher number = shown first
     },
 
+    // ─── Soft delete ────────────────────────────────────────────────
     deletedAt: {
       type: Date,
       default: null,
     },
   },
   {
-    timestamps: true,
+    timestamps: true, // createdAt, updatedAt
   }
 );
 
+// ─── Indexes ─────────────────────────────────────────────────────────
 bannerSchema.index({ isActive: 1, startDate: 1, endDate: 1 });
 bannerSchema.index({ appliesTo: 1 });
 bannerSchema.index({ productIds: 1 });
 bannerSchema.index({ categoryIds: 1 });
 
+// ─── Virtual: is this banner currently live? ──────────────────────────
 bannerSchema.virtual("isLive").get(function () {
   const now = new Date();
   return (
@@ -131,29 +136,35 @@ bannerSchema.virtual("isLive").get(function () {
   );
 });
 
+// ─── Validation: endDate must be after startDate ──────────────────────
 bannerSchema.pre("save", function (next) {
   if (this.endDate <= this.startDate) {
     return next(new Error("endDate must be after startDate"));
   }
 
+  // percentage discount must be 0–100
   if (this.discountType === "percentage" && this.discount > 100) {
     return next(new Error("Percentage discount cannot exceed 100"));
   }
 
+  // if appliesTo = 'products', productIds must not be empty
   if (this.appliesTo === "products" && this.productIds.length === 0) {
     return next(
       new Error("productIds cannot be empty when appliesTo is 'products'")
     );
   }
 
+  // if appliesTo = 'category', categoryIds must not be empty
   if (this.appliesTo === "category" && this.categoryIds.length === 0) {
     return next(
       new Error("categoryIds cannot be empty when appliesTo is 'category'")
     );
   }
 
+  next();
 });
 
+// ─── Static: fetch all currently live banners ─────────────────────────
 bannerSchema.statics.getLiveBanners = function () {
   const now = new Date();
   return this.find({
@@ -165,6 +176,7 @@ bannerSchema.statics.getLiveBanners = function () {
   }).sort({ priority: -1 });
 };
 
+// ─── Method: safely increment usedCount ──────────────────────────────
 bannerSchema.methods.incrementUsage = async function () {
   if (this.maxUses !== null && this.usedCount >= this.maxUses) {
     throw new Error("Banner has reached its maximum usage limit");
