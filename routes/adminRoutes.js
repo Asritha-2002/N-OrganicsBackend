@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-
+const Product = require('../models/Product');
 const { auth, adminAuth } = require('../middleware/auth');
 const User = require('../models/User');
 
@@ -110,6 +110,30 @@ router.get("/admin/users", auth, adminAuth, async (req, res) => {
     return res.status(500).json({
       success: false,
       message: error.message || "Something went wrong",
+    });
+  }
+});
+
+
+router.get("/admin/products/list", auth, adminAuth, async (req, res) => {
+  try {
+    const products = await Product.find(
+      {
+        deletedAt: null,
+        isActive: true   // ✅ important
+      },
+      { _id: 1, name: 1 }
+    ).lean();
+
+    return res.status(200).json({
+      success: true,
+      data: products,
+    });
+  } catch (error) {
+    console.error("Error fetching products list:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch products",
     });
   }
 });

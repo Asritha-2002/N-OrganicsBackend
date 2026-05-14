@@ -1,11 +1,11 @@
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
-const { required } = require('joi');
 
-const addressSchema = new mongoose.Schema({      
+const addressSchema = new mongoose.Schema({ 
+  name: {type: String, required: true},     
   mobilenum: { type: String, required: true },       
   addl1: { type: String, required: true },          
-  addl2: { type: String, default: "" },             
+  country : { type: String, default: "" },             
   landmark: { type: String, default: "" },          
   pincode: { type: String, required: true },        
   city: { type: String, required: true },         
@@ -14,12 +14,18 @@ const addressSchema = new mongoose.Schema({
   isDefault: { type: Boolean, default: false },   
 });
 
-
 const userSchema = new mongoose.Schema({
   name: { type: String, required: true },
   email: { type: String, required: true, unique: true },
   password: { type: String, required: true },
-  phone: {type: String,required: true},
+  phone: { type: String, required: true },
+  
+  // Added profileImage field
+  profileImage: { 
+    type: String, 
+    default: "" 
+  },
+
   gender: { 
     type: String, 
     enum: ['Male', 'Female', 'Other'], 
@@ -30,18 +36,21 @@ const userSchema = new mongoose.Schema({
     type: Date, 
     default: null 
   },
+
   isAdmin: { type: Boolean, default: false },
   isActive: { type: Boolean, default: true },
   addresses: [addressSchema],
 
   favorites: [{
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'Book'
+    ref: 'Product'
   }],
+
   isVerified: { type: Boolean, default: false },
   verificationToken: String,
   resetPasswordToken: String,
   resetPasswordExpires: Date,
+
   preferences: {
     newsletter: { type: Boolean, default: true },
     orderUpdates: { type: Boolean, default: true },
@@ -51,31 +60,34 @@ const userSchema = new mongoose.Schema({
   }
 }, { timestamps: true });
 
+// Pre-save middleware
 userSchema.pre('save', async function(next) {
     // Handle password hashing
     if (this.isModified('password')) {
         this.password = await bcrypt.hash(this.password, 10);
     }
 
-    // Handle addresses without contact numbers
+    // Handle addresses logic
     if (this.addresses && this.addresses.length > 0) {
-        let defaultPhone = this.preferences?.phone || '';
+        let defaultPhone = this.phone || ''; // Using the main phone field as fallback
         this.addresses.forEach(addr => {
-            if (!addr.contactNumber) {
-                addr.contactNumber = defaultPhone;
+            // Updated to check mobilenum to match your addressSchema field name
+            if (!addr.mobilenum) {
+                addr.mobilenum = defaultPhone;
             }
         });
     }
 });
 
-// Add method to set default address
+// Method to set default address
 userSchema.methods.setDefaultAddress = async function(addressId) {
     this.addresses.forEach(addr => addr.isDefault = false);
     const address = this.addresses.id(addressId);
     if (address) {
         address.isDefault = true;
-        await this.save();
+        return await this.save();
     }
+    throw new Error('Address not found');
 };
 
 module.exports = mongoose.model('User', userSchema);

@@ -6,6 +6,8 @@ const { auth, adminAuth } = require('../middleware/auth');
 const { cloudinary, uploadImageToCloudinary } = require('../config/cloudinary');
 const mongoose=require('mongoose')
 const router = express.Router();
+const User = require("../models/User");
+const Cart =require('../models/Cart')
 
 // ─────────────────────────────────────────────────────────────
 // Multer Memory Storage
@@ -48,7 +50,7 @@ router.post(
 
       // ── Boolean Fields ─────────────────────────────────────────────────────
       const booleanFields = [
-        "isActive", "isFeatured", "isBestseller", "isNewArrival", "isFreeShipping",
+        "isActive", "isFeatured", "isBestseller", "isNewArrival", "isLimited",
       ];
       booleanFields.forEach((field) => {
         if (data[field] !== undefined) {
@@ -69,6 +71,12 @@ router.post(
           stock:      typeof variant.stock      === "string" ? JSON.parse(variant.stock)      : variant.stock,
           weight:     typeof variant.weight     === "string" ? JSON.parse(variant.weight)     : variant.weight,
           attributes: typeof variant.attributes === "string" ? JSON.parse(variant.attributes) : variant.attributes,
+          isActive:     variant.isActive     === true || variant.isActive     === "true",
+    isDefault:    variant.isDefault    === true || variant.isDefault    === "true",
+    isFeatured:   variant.isFeatured   === true || variant.isFeatured   === "true",
+    isBestseller: variant.isBestseller === true || variant.isBestseller === "true",
+    isNewArrival: variant.isNewArrival === true || variant.isNewArrival === "true",
+    isLimited:    variant.isLimited    === true || variant.isLimited    === "true",
         }));
       }
 
@@ -283,8 +291,10 @@ router.put(
         });
 
       // ── Boolean fields ───────────────────────────────────────────────────
-      ["isActive", "isFeatured", "isBestseller", "isNewArrival", "isFreeShipping"]
+      ["isActive", "isFeatured", "isBestseller", "isNewArrival", "isLimited"]
+
         .forEach((field) => {
+          
           if (data[field] !== undefined)
             data[field] = data[field] === true || data[field] === "true";
         });
@@ -302,6 +312,7 @@ router.put(
           stock:      typeof variant.stock      === "string" ? JSON.parse(variant.stock)      : variant.stock,
           weight:     typeof variant.weight     === "string" ? JSON.parse(variant.weight)     : variant.weight,
           attributes: typeof variant.attributes === "string" ? JSON.parse(variant.attributes) : variant.attributes,
+
         }));
       }
 
@@ -685,23 +696,7 @@ router.get("/products/list", async (req, res) => {
   try {
     const now = new Date();
 
-    const products = await Product.find(
-      {
-        deletedAt: null,
-        isActive: true,
-      },
-      {
-        name: 1,
-        category: 1,
-        tag: 1,
-        slug: 1,
-        images: { $slice: 1 },
-        variants: { $slice: 1 },
-      }
-    )
-      .sort({ createdAt: -1 })
-      .lean();
-
+    // Get active banners (unchanged)
     const activeBanners = await Banner.find({
       isActive: true,
       deletedAt: null,
@@ -712,71 +707,211 @@ router.get("/products/list", async (req, res) => {
     const normalize = (value) =>
       String(value || "").trim().toLowerCase();
 
-    const formattedProducts = products.map((product) => {
-      const firstVariant = product.variants?.[0] || null;
-      const sellingPrice = firstVariant?.price?.sellingPrice || 0;
-      const mrp = firstVariant?.price?.mrp || 0;
+    // Main products query - only active products
+    const products = await Product.find({
+      deletedAt: null,
+      isActive: true,
+    })
+      .select("name category tag slug images variants")
+      .lean();
 
-      const normalizedProductCategory = normalize(product.category);
+    // Flatten products + variants into single array
+    let allProducts = [];
 
-      const matchedBanners = activeBanners
-        .filter((banner) => {
-          if (banner.maxUses && banner.usedCount >= banner.maxUses) {
+    products.forEach((product) => {
+      const productId = product._id.toString(); // Product ID for all variants
+
+      // Main product (if it has no variants or first variant)
+      const firstActiveVariant = product.variants?.find(v => v.isActive) || product.variants?.[0];
+      
+      if (firstActiveVariant || product.variants?.length === 0) {
+        const sellingPrice = firstActiveVariant?.price?.sellingPrice || 0;
+        const mrp = firstActiveVariant?.price?.mrp || 0;
+        const quantity = firstActiveVariant?.stock?.quantity || 0;
+
+        const normalizedProductCategory = normalize(product.category);
+
+        const matchedBanners = activeBanners
+          .filter((banner) => {
+            if (banner.maxUses && banner.usedCount >= banner.maxUses) {
+              return false;
+            }
+
+            if (banner.appliesTo === "all") return true;
+
+            if (banner.appliesTo === "products") {
+              return (banner.productIds || [])
+                .map(String)
+                .includes(productId);
+            }
+
+            if (banner.appliesTo === "category") {
+              return (banner.categoryIds || [])
+                .map(normalize)
+                .includes(normalizedProductCategory);
+            }
+
             return false;
-          }
+          })
+          .map((banner) => {
+            const effectiveDiscount =
+              banner.discountType === "percentage"
+                ? (sellingPrice * banner.discount) / 100
+                : banner.discount;
 
-          if (banner.appliesTo === "all") return true;
+            return {
+              bannerId: banner._id,
+              title: banner.title,
+              description: banner.description || "",
+              discount: banner.discount,
+              discountType: banner.discountType,
+              effectiveDiscount,
+              endDate: banner.endDate,
+              image: banner.image || null,
+            };
+          })
+          .sort((a, b) => b.effectiveDiscount - a.effectiveDiscount);
 
-          if (banner.appliesTo === "products") {
-            return (banner.productIds || []).map(String).includes(product._id.toString());
-          }
+        const bestOffer = matchedBanners[0] || null;
 
-          if (banner.appliesTo === "category") {
-            return (banner.categoryIds || [])
-              .map(normalize)
-              .includes(normalizedProductCategory);
-          }
+        // Add MAIN product
+        allProducts.push({
+          _id: product._id, // Product ID
+          productId: productId, // NEW - Always product ID
+          isVariant: false,
+          variantIndex: null,
+          sku: product.sku || `${product.name.split(' ')[0]}-DEFAULT`,
+          name: product.name,
+          category: product.category,
+          tag: product.tag,
+          slug: product.slug,
+          image: product.images?.[0]?.url || "",
+          mrp,
+          sellingPrice,
+          quantity,
+          isFeatured: firstActiveVariant?.isFeatured || false,
+          isBestseller: firstActiveVariant?.isBestseller || false,
+          isNewest: firstActiveVariant?.isNewest || false,
+          isLimited: firstActiveVariant?.isLimited || false,
+          bestOffer,
+          sortWeight: 0,
+        });
+      }
 
-          return false;
-        })
-        .map((banner) => {
-          const effectiveDiscount =
-            banner.discountType === "percentage"
-              ? (sellingPrice * banner.discount) / 100
-              : banner.discount;
+      // Add individual ACTIVE variants - SAME PRODUCT ID
+      if (product.variants) {
+        product.variants.forEach((variant, variantIndex) => {
+          // Only active variants
+          if (!variant.isActive) return;
 
-          return {
-            bannerId: banner._id,
-            title: banner.title,
-            description: banner.description || "",
-            discount: banner.discount,
-            discountType: banner.discountType,
-            effectiveDiscount,
-            endDate: banner.endDate,
-            image: banner.image || null,
-          };
-        })
-        .sort((a, b) => b.effectiveDiscount - a.effectiveDiscount);
+          const sellingPrice = variant.price?.sellingPrice || 0;
+          const mrp = variant.price?.mrp || 0;
+          const quantity = variant.stock?.quantity || 0;
 
-      const bestOffer = matchedBanners[0] || null;
+          const normalizedProductCategory = normalize(product.category);
 
-      return {
-        _id: product._id,
-        name: product.name,
-        category: product.category,
-        tag: product.tag,
-        slug: product.slug,
-        image: product.images?.[0]?.url || "",
-        mrp,
-        sellingPrice,
-        bestOffer,
-      };
+          const matchedBanners = activeBanners
+            .filter((banner) => {
+              if (banner.maxUses && banner.usedCount >= banner.maxUses) {
+                return false;
+              }
+
+              if (banner.appliesTo === "all") return true;
+
+              if (banner.appliesTo === "products") {
+                return (banner.productIds || [])
+                  .map(String)
+                  .includes(productId);
+              }
+
+              if (banner.appliesTo === "category") {
+                return (banner.categoryIds || [])
+                  .map(normalize)
+                  .includes(normalizedProductCategory);
+              }
+
+              return false;
+            })
+            .map((banner) => {
+              const effectiveDiscount =
+                banner.discountType === "percentage"
+                  ? (sellingPrice * banner.discount) / 100
+                  : banner.discount;
+
+              return {
+                bannerId: banner._id,
+                title: banner.title,
+                description: banner.description || "",
+                discount: banner.discount,
+                discountType: banner.discountType,
+                effectiveDiscount,
+                endDate: banner.endDate,
+                image: banner.image || null,
+              };
+            })
+            .sort((a, b) => b.effectiveDiscount - a.effectiveDiscount);
+
+          const bestOffer = matchedBanners[0] || null;
+
+          // Variant image priority: variant.images[0] > product.images[0]
+          const variantImage = variant.images?.[0]?.url;
+          const image = variantImage || product.images?.[0]?.url || "";
+
+          allProducts.push({
+            _id: product._id, // NEW - SAME PRODUCT ID for variants too
+            productId: productId, // NEW - Always product ID
+            isVariant: true,
+            variantIndex, // Differentiator
+            sku: variant.sku || `${product.name.split(' ')[0]}-${variant.attributes?.shade || variant.attributes?.size || 'DEFAULT'}`,
+            name: `${product.name} ${variant.attributes?.shade ? `(${variant.attributes.shade})` : ''} ${variant.attributes?.size ? `(${variant.attributes.size})` : ''}`.trim(),
+            category: product.category,
+            tag: product.tag,
+            slug: `${product.slug}?variant=${variantIndex}`,
+            image,
+            mrp,
+            sellingPrice,
+            quantity,
+            isFeatured: variant.isFeatured || false,
+            isBestseller: variant.isBestseller || false,
+            isNewest: variant.isNewest || false,
+            isLimited: variant.isLimited || false,
+            bestOffer,
+            sortWeight: Math.random(),
+          });
+        });
+      }
+    });
+
+    // Sort: Featured > Bestseller > Newest > Limited > Random
+    allProducts.sort((a, b) => {
+      // Featured products/variants first
+      if (a.isFeatured !== b.isFeatured) {
+        return b.isFeatured ? 1 : -1;
+      }
+      
+      // Bestsellers next
+      if (a.isBestseller !== b.isBestseller) {
+        return b.isBestseller ? 1 : -1;
+      }
+      
+      // Newest next
+      if (a.isNewest !== b.isNewest) {
+        return b.isNewest ? 1 : -1;
+      }
+      
+      // Limited next
+      if (a.isLimited !== b.isLimited) {
+        return b.isLimited ? 1 : -1;
+      }
+      
+      // Rest: RANDOM ORDER
+      return b.sortWeight - a.sortWeight;
     });
 
     return res.status(200).json({
       success: true,
       message: "Products fetched successfully",
-      data: formattedProducts,
+      data: allProducts,
     });
   } catch (error) {
     console.error("Error fetching product list:", error);
@@ -984,7 +1119,6 @@ router.get("/admin/products", async (req, res) => {
   }
 });
 
-
 router.get("/admin/products/:id", async (req, res) => {
   try {
     const { id } = req.params;
@@ -1038,13 +1172,37 @@ router.get("/products/:id", async (req, res) => {
       });
     }
 
+    // ─── CHECK CART FOR PRESENCE ─────────────────────────────────────────────
+    // ─── CHECK CART FOR PRESENCE ─────────────────────────────────────────────
+    let cartItemMap = new Set(); 
+    
+    if (req.user) {
+      const cart = await Cart.findOne({ userId: req.user._id }).lean();
+      if (cart && cart.items) {
+        cart.items.forEach(item => {
+          // Use String() to ensure we have a clean string comparison
+          // Also ensure productId exists before calling toString
+          if (item.productId) {
+            cartItemMap.add(`${String(item.productId)}-${item.variantIndex}`);
+          }
+        });
+      }
+    }
+
+    // Add isPresent flag to each variant of the main product
+    const variantsWithPresence = (product.variants || []).map((variant, index) => {
+      const key = `${String(product._id)}-${index}`;
+      return {
+        ...variant,
+        isPresent: cartItemMap.has(key)
+      };
+    });
+
     const now = new Date();
-
     const normalize = (value) => String(value || "").trim().toLowerCase();
-
     const normalizedProductCategory = normalize(product.category);
 
-    // Fetch all active banners first, then filter manually
+    // ─── FETCH BANNERS ────────────────────────────────────────────────────────
     const activeBanners = await Banner.find({
       isActive: true,
       deletedAt: null,
@@ -1132,20 +1290,259 @@ router.get("/products/:id", async (req, res) => {
         return b.effectiveDiscount - a.effectiveDiscount;
       });
 
+    // ─── FETCH RELATED PRODUCTS RAW DATA ─────────────────────────────────────
+    const relatedProductsRaw = await Product.find({
+      _id: { $ne: id },
+      deletedAt: null,
+      isActive: true,
+      $or: [
+        { category: { $regex: `^${product.category}$`, $options: "i" } },
+        { tag: { $regex: `^${product.tag}$`, $options: "i" } }
+      ]
+    })
+      .limit(8)
+      .lean();
+
+    // ─── FORMAT RELATED PRODUCTS ──────────────────────────────────────────────
+    const relatedProducts = relatedProductsRaw.map((relProduct) => {
+      const firstVariant = relProduct.variants?.[0] || null;
+      const sellingPrice = firstVariant?.price?.sellingPrice || 0;
+      const mrp = firstVariant?.price?.mrp || 0;
+      const stockQuantity = firstVariant?.stock?.quantity || 0;
+
+      const normalizedRelCategory = normalize(relProduct.category);
+
+      const relMatchedBanners = activeBanners
+        .filter((banner) => {
+          if (banner.maxUses && banner.usedCount >= banner.maxUses) {
+            return false;
+          }
+          if (banner.appliesTo === "all") return true;
+          if (banner.appliesTo === "products") {
+            return (banner.productIds || []).map(String).includes(relProduct._id.toString());
+          }
+          if (banner.appliesTo === "category") {
+            return (banner.categoryIds || [])
+              .map(normalize)
+              .includes(normalizedRelCategory);
+          }
+          return false;
+        })
+        .map((banner) => {
+          const effectiveDiscount =
+            banner.discountType === "percentage"
+              ? (sellingPrice * banner.discount) / 100
+              : banner.discount;
+
+          return {
+            bannerId: banner._id,
+            title: banner.title,
+            description: banner.description || "",
+            discount: banner.discount,
+            discountType: banner.discountType,
+            effectiveDiscount,
+            endDate: banner.endDate,
+            image: banner.image || null,
+          };
+        })
+        .sort((a, b) => b.effectiveDiscount - a.effectiveDiscount);
+
+      const bestOffer = relMatchedBanners[0] || null;
+
+      return {
+        _id: relProduct._id,
+        name: relProduct.name,
+        category: relProduct.category,
+        tag: relProduct.tag,
+        slug: relProduct.slug,
+        image: relProduct.images?.[0]?.url || "",
+        mrp,
+        sellingPrice,
+        stockQuantity,
+        bestOffer,
+        // Check presence for the first variant of related products
+        isPresent: cartItemMap.has(`${relProduct._id.toString()}-0`)
+      };
+    });
+
+    // ─── RETURN RESPONSE ─────────────────────────────────────────────────────
     return res.status(200).json({
       success: true,
       data: {
         ...product,
+        variants: variantsWithPresence, // Updated with isPresent per variant
         offers,
         bestOffer: offers.find((o) => o.isAvailable) || null,
+        relatedProducts, 
       },
     });
   } catch (error) {
     console.error("Error fetching product details:", error);
-
     return res.status(500).json({
       success: false,
       message: "Failed to fetch product details",
+    });
+  }
+});
+
+router.get("/products/auth/:id", auth, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid product id",
+      });
+    }
+
+    // ── 1. Fetch Product ───────────────────────────────────────────────────
+    const product = await Product.findOne({
+      _id: id,
+      deletedAt: null,
+    }).lean();
+
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        message: "Product not found",
+      });
+    }
+
+    // ── 2. Build cart lookup set: "productId-variantIndex" ─────────────────
+    // Key format matches exactly how addItem stores and checks items
+    const cartKeySet = new Set();
+
+const cart = await Cart.findOne({ userId: req.user.id }).lean();
+// console.log("cart items length:", cart?.items?.length);
+
+if (cart?.items?.length) {
+  cart.items.forEach((item, i) => {
+    const key = `${String(item.productId)}-${Number(item.variantIndex)}`;
+    cartKeySet.add(key);
+    //console.log("added to set:", key); // ← does this log fire?
+  });
+}
+
+//console.log("cartKeySet after loop:", [...cartKeySet]); // ← check here
+
+    // ── 3. Add isPresent to each variant using its array index ─────────────
+    const variantsWithPresence = (product.variants || []).map((variant, index) => ({
+      ...variant,
+      isPresent: cartKeySet.has(`${String(product._id)}-${index}`),
+    }));
+
+    // ── 4. Fetch active banners that apply to this product ─────────────────
+    const now = new Date();
+    const normalize = (val) => String(val || "").trim().toLowerCase();
+    const normalizedCategory = normalize(product.category);
+
+    const activeBanners = await Banner.find({
+      isActive:  true,
+      deletedAt: null,
+      startDate: { $lte: now },
+      endDate:   { $gte: now },
+    }).lean();
+
+    const matchedBanners = activeBanners.filter((banner) => {
+      if (banner.appliesTo === "all") return true;
+
+      if (banner.appliesTo === "product" || banner.appliesTo === "products") {
+        return (banner.productIds || [])
+          .map(String)
+          .includes(String(product._id));
+      }
+
+      if (banner.appliesTo === "category") {
+        return (banner.categoryIds || [])
+          .map(normalize)
+          .includes(normalizedCategory);
+      }
+
+      return false;
+    });
+
+    const lowestPrice = product.variants?.length
+      ? Math.min(...product.variants.map((v) => v.price?.sellingPrice || Infinity))
+      : 0;
+
+    // ── 5. Format offers ───────────────────────────────────────────────────
+    const offers = matchedBanners
+      .map((banner) => {
+        const isGloballyExhausted =
+          banner.maxUses != null && banner.usedCount >= banner.maxUses;
+
+        const effectiveDiscount =
+          banner.discountType === "percentage"
+            ? (lowestPrice * banner.discount) / 100
+            : banner.discount;
+
+        return {
+          bannerId:         banner._id,
+          title:            banner.title,
+          description:      banner.description || "",
+          discount:         banner.discount,
+          discountType:     banner.discountType,
+          effectiveDiscount,
+          endDate:          banner.endDate,
+          image:            banner.image || null,
+          isAvailable:      !isGloballyExhausted,
+          unavailableReason: isGloballyExhausted ? "Offer limit reached" : null,
+        };
+      })
+      .sort((a, b) => {
+        // Available first, then by highest effective discount
+        if (a.isAvailable !== b.isAvailable) return b.isAvailable - a.isAvailable;
+        return b.effectiveDiscount - a.effectiveDiscount;
+      });
+
+    // ── 6. Fetch related products ──────────────────────────────────────────
+    const relatedProductsRaw = await Product.find({
+      _id:       { $ne: id },
+      deletedAt: null,
+      isActive:  true,
+      $or: [
+        { category: { $regex: `^${product.category}$`, $options: "i" } },
+        { tag:      { $regex: `^${product.tag}$`,      $options: "i" } },
+      ],
+    })
+      .limit(8)
+      .lean();
+
+    const relatedProducts = relatedProductsRaw.map((relProduct) => {
+      const firstVariant = relProduct.variants?.[0] || null;
+
+      return {
+        _id:          relProduct._id,
+        name:         relProduct.name,
+        category:     relProduct.category,
+        slug:         relProduct.slug,
+        image:        relProduct.images?.[0]?.url || "",
+        mrp:          firstVariant?.price?.mrp          || 0,
+        sellingPrice: firstVariant?.price?.sellingPrice || 0,
+        stockQuantity: firstVariant?.stock?.quantity    || 0,
+        // Related product first variant is always at index 0
+        isPresent: cartKeySet.has(`${String(relProduct._id)}-0`),
+      };
+    });
+
+    // ── 7. Return ──────────────────────────────────────────────────────────
+    return res.status(200).json({
+      success: true,
+      data: {
+        ...product,
+        variants:        variantsWithPresence,
+        offers,
+        bestOffer:       offers.find((o) => o.isAvailable) || null,
+        relatedProducts,
+      },
+    });
+
+  } catch (error) {
+    console.error("Error fetching product details:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Server Error",
     });
   }
 });
@@ -1220,5 +1617,147 @@ router.delete("/admin/products/:id", auth, adminAuth, async (req, res) => {
     });
   }
 });
+
+router.get("/profile/favorites/products", auth, async (req, res) => {
+  try {
+    const now = new Date();
+
+    const user = await User.findById(req.user._id || req.user.id).select("favorites").lean();
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    const favoriteIds = (user.favorites || [])
+      .filter((id) => mongoose.Types.ObjectId.isValid(id))
+      .map((id) => new mongoose.Types.ObjectId(id));
+
+    if (favoriteIds.length === 0) {
+      return res.status(200).json({
+        success: true,
+        message: "No favorite products found",
+        data: [],
+      });
+    }
+
+    const products = await Product.find(
+      {
+        _id: { $in: favoriteIds },
+        deletedAt: null,
+        isActive: true,
+      },
+      {
+        name: 1,
+        category: 1,
+        tag: 1,
+        slug: 1,
+        images: { $slice: 1 },
+        variants: { $slice: 1 },
+      }
+    ).lean();
+
+    const activeBanners = await Banner.find({
+      isActive: true,
+      deletedAt: null,
+      startDate: { $lte: now },
+      endDate: { $gte: now },
+    }).lean();
+
+    const normalize = (value) => String(value || "").trim().toLowerCase();
+
+    const formattedProducts = products.map((product) => {
+      const firstVariant = product.variants?.[0] || null;
+      const sellingPrice = firstVariant?.price?.sellingPrice || 0;
+      const mrp = firstVariant?.price?.mrp || 0;
+
+      const normalizedProductCategory = normalize(product.category);
+
+      const matchedBanners = activeBanners
+        .filter((banner) => {
+          if (banner.maxUses && banner.usedCount >= banner.maxUses) {
+            return false;
+          }
+
+          if (banner.appliesTo === "all") return true;
+
+          if (banner.appliesTo === "products") {
+            return (banner.productIds || [])
+              .map(String)
+              .includes(product._id.toString());
+          }
+
+          if (banner.appliesTo === "category") {
+            return (banner.categoryIds || [])
+              .map(normalize)
+              .includes(normalizedProductCategory);
+          }
+
+          return false;
+        })
+        .map((banner) => {
+          const effectiveDiscount =
+            banner.discountType === "percentage"
+              ? (sellingPrice * banner.discount) / 100
+              : banner.discount;
+
+          return {
+            bannerId: banner._id,
+            title: banner.title,
+            description: banner.description || "",
+            discount: banner.discount,
+            discountType: banner.discountType,
+            effectiveDiscount,
+            endDate: banner.endDate,
+            image: banner.image || null,
+          };
+        })
+        .sort((a, b) => b.effectiveDiscount - a.effectiveDiscount);
+
+      const bestOffer = matchedBanners[0] || null;
+
+      return {
+        _id: product._id,
+        name: product.name,
+        category: product.category,
+        tag: product.tag,
+        slug: product.slug,
+        image: product.images?.[0]?.url || "",
+        mrp,
+        sellingPrice,
+        bestOffer,
+        isFavorite: true,
+      };
+    });
+
+    const orderedProducts = favoriteIds
+      .map((favId) =>
+        formattedProducts.find(
+          (product) => product._id.toString() === favId.toString()
+        )
+      )
+      .filter(Boolean);
+
+    return res.status(200).json({
+      success: true,
+      message: "Favorite products fetched successfully",
+      data: orderedProducts,
+    });
+  } catch (error) {
+    console.error("Error fetching favorite products:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch favorite products",
+    });
+  }
+});
+
+
+
+
+
 
 module.exports = router;

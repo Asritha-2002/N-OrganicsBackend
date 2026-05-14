@@ -10,6 +10,9 @@ const bannerRoutes=require('./routes/bannerRoutes.js')
 const announcementRoutes=require('./routes/announcementRoutes.js')
 const productRoutes=require('./routes/productRoutes.js')
 const tagRoutes=require('./routes/tagRoutes.js')
+const voucherRoutes=require('./routes/voucherRoutes.js')
+const cartRoutes=require('./routes/cartRoutes.js')
+const buynowRoutes=require('./routes/buynowRoutes.js')
 // Load environment variables
 dotenv.config();
 
@@ -32,7 +35,9 @@ app.use('/api',bannerRoutes);
 app.use('/api',announcementRoutes)
 app.use('/api', productRoutes)
 app.use('/api',tagRoutes)
-
+app.use('/api', voucherRoutes)
+app.use('/api',cartRoutes)
+app.use('/api',buynowRoutes)
 
 
 

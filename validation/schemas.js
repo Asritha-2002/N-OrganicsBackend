@@ -11,6 +11,7 @@ const userSchemas = {
     isAdmin: Joi.boolean().optional(),
 
     address: Joi.object({
+      name: Joi.string(),
       street: Joi.string(),
       city: Joi.string(),
       state: Joi.string(),
@@ -31,6 +32,7 @@ const userSchemas = {
     gender: Joi.string().valid("Male", "Female"),
     dateOfBirth: Joi.date(),
     address: Joi.object({
+      name:Joi.string().allow(""),
       street: Joi.string().allow(""),
       city: Joi.string().allow(""),
       state: Joi.string().allow(""),

@@ -69,6 +69,10 @@ const variantSchema = new mongoose.Schema(
     barcode:   { type: String, trim: true },
     isDefault: { type: Boolean, default: false },
     isActive:  { type: Boolean, default: true },
+    isFeatured:   { type: Boolean, default: false },
+    isBestseller: { type: Boolean, default: false },
+    isNewArrival: { type: Boolean, default: false },
+    isLimited:    { type: Boolean, default: false },
   },
   { timestamps: true }
 );
@@ -330,6 +334,7 @@ const productSchema = new mongoose.Schema(
     isFeatured:   { type: Boolean, default: false },
     isBestseller: { type: Boolean, default: false },
     isNewArrival: { type: Boolean, default: false },
+    isLimited: { type: Boolean, default: false },
 
     publishedAt: { type: Date, default: null },
 
@@ -356,6 +361,7 @@ productSchema.index({ status: 1, isActive: 1 });
 productSchema.index({ isFeatured: 1 });
 productSchema.index({ isBestseller: 1 });
 productSchema.index({ isNewArrival: 1 });
+productSchema.index({ isLimited: 1 });
 productSchema.index({ tag: 1 });
 productSchema.index({ "categoryImage.category": 1 });
 productSchema.index({ "tagImage.tag": 1 });
