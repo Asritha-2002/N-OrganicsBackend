@@ -725,7 +725,7 @@ router.delete("/addresses/:addressId", auth, async (req, res) => {
   }
 });
 
-router.post("/contact", async (req, res) => {
+router.post("/contact",auth, async (req, res) => {
   try {
     const { name, email, description } = req.body;
 
