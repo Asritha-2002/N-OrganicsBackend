@@ -31,10 +31,13 @@ router.post(
     { name: "categoryImage", maxCount: 1  }, // ← NEW
     { name: "tagImage",      maxCount: 1  }, // ← NEW
      ...Array.from({ length: 10 }, (_, i) => ({ name: `variantImage_${i}`, maxCount: 10 })),
+     ...Array.from({ length: 20 }, (_, i) => ({ name: `ingredientImage_${i}`,maxCount: 1,})),
   ]),
   async (req, res) => {
+   
     try {
       const data = { ...req.body };
+      console.log(data)
 
       // ── Parse JSON Fields ──────────────────────────────────────────────────
       const jsonFields = [
@@ -79,6 +82,26 @@ router.post(
     isLimited:    variant.isLimited    === true || variant.isLimited    === "true",
         }));
       }
+
+      // ── Parse Ingredients ───────────────────────────────────────────────
+if (Array.isArray(data.ingredients)) {
+  data.ingredients = data.ingredients.map((ingredient) => ({
+    name: ingredient.name?.trim(),
+
+    description: ingredient.description?.trim() || "",
+
+    image: {
+      url: "",
+      public_id: "",
+      altText: "",
+    },
+  }));
+
+  // Remove empty ingredients
+  data.ingredients = data.ingredients.filter(
+    (ingredient) => ingredient.name
+  );
+}
 
       // ── Upload Main Product Images ─────────────────────────────────────────
       data.images = [];
@@ -162,6 +185,31 @@ if (Array.isArray(data.variants)) {
   }
 }
 
+// ── Upload Ingredient Images ───────────────────────────────────────
+if (Array.isArray(data.ingredients)) {
+  for (let ingredientIndex = 0; ingredientIndex < data.ingredients.length; ingredientIndex++) {
+
+    const ingredientFile =
+      req.files?.[`ingredientImage_${ingredientIndex}`]?.[0];
+
+    if (ingredientFile) {
+      const uploadResult = await uploadImageToCloudinary(
+        ingredientFile.buffer,
+        {
+          folder: `products/${data.slug || "new-product"}/ingredients`,
+        }
+      );
+
+      data.ingredients[ingredientIndex].image = {
+        url: uploadResult.url,
+        public_id: uploadResult.public_id,
+        altText:
+          data[`ingredientImageAlt_${ingredientIndex}`] || "",
+      };
+    }
+  }
+}
+
       // ── Upload Videos ──────────────────────────────────────────────────────
       data.videos = [];
       if (req.files?.videos?.length) {
@@ -192,7 +240,8 @@ if (Array.isArray(data.variants)) {
         if (
           key.startsWith("imageAlt_") ||
           key.startsWith("variantImageAlt_") ||
-          key.startsWith("videoTitle_")
+          key.startsWith("videoTitle_") ||
+key.startsWith("ingredientImageAlt_")
         ) {
           delete data[key];
         }
@@ -245,7 +294,9 @@ if (Array.isArray(data.variants)) {
         });
       }
 
+
       return res.status(400).json({
+        
         success: false,
         message: error.message || "Error creating product. Please check your data and try again.",
         details: [],
@@ -265,6 +316,11 @@ router.put(
     { name: "categoryImage", maxCount: 1  },
     { name: "tagImage",      maxCount: 1  },
     ...Array.from({ length: 10 }, (_, i) => ({ name: `variantImage_${i}`, maxCount: 10 })),
+    ...Array.from({ length: 20 }, (_, i) => ({
+  name: `ingredientImage_${i}`,
+  maxCount: 1,
+})),
+    
   ]),
   async (req, res) => {
     try {
@@ -442,6 +498,53 @@ router.put(
         }
       }
 
+      // ── Ingredient images ─────────────────────────────────────
+// ── Ingredient image ─────────────────────────────────────
+if (Array.isArray(data.ingredients)) {
+
+  for (
+    let ingredientIndex = 0;
+    ingredientIndex < data.ingredients.length;
+    ingredientIndex++
+  ) {
+
+    const ingredientFiles =
+      req.files?.[`ingredientImage_${ingredientIndex}`] || [];
+
+    // Keep existing image by default
+    let ingredientImage =
+      product.ingredients?.[ingredientIndex]?.image || {
+        url: "",
+        public_id: "",
+        altText: "",
+      };
+
+    // Upload new image if selected
+    if (ingredientFiles.length > 0) {
+
+      const file = ingredientFiles[0];
+
+      const result = await uploadImageToCloudinary(file.buffer, {
+        folder: `products/${
+          data.slug || product.slug || "new-product"
+        }/ingredients`,
+      });
+
+      ingredientImage = {
+        url: result.url,
+        public_id: result.public_id,
+        altText:
+          data[
+            `ingredientImageAlt_${ingredientIndex}_${file.originalname}`
+          ] || "",
+      };
+    }
+
+    // Assign SINGLE image object
+    data.ingredients[ingredientIndex].image = ingredientImage;
+  }
+}
+
       // ── Cleanup temp fields ──────────────────────────────────────────────
       delete data.categoryImageAlt;
       delete data.tagImageAlt;
@@ -451,7 +554,9 @@ router.put(
           key.startsWith("imageAlt_")              ||
           key.startsWith("variantImageAlt_")        ||
           key.startsWith("existingVariantImages_")  ||
-          key.startsWith("videoTitle_")
+          key.startsWith("videoTitle_")||
+          key.startsWith("ingredientImageAlt_") ||
+key.startsWith("existingIngredientImages_") 
         ) {
           delete data[key];
         }
@@ -696,61 +801,56 @@ router.get("/products/list", async (req, res) => {
   try {
     const now = new Date();
 
-    // Get active banners (unchanged)
+    // ── Active banners ─────────────────────────────────────────────────────
     const activeBanners = await Banner.find({
-      isActive: true,
+      isActive:  true,
       deletedAt: null,
       startDate: { $lte: now },
-      endDate: { $gte: now },
+      endDate:   { $gte: now },
     }).lean();
 
-    const normalize = (value) =>
-      String(value || "").trim().toLowerCase();
+    const normalize = (value) => String(value || "").trim().toLowerCase();
 
-    // Main products query - only active products
+    // ── Products query ─────────────────────────────────────────────────────
     const products = await Product.find({
       deletedAt: null,
-      isActive: true,
+      isActive:  true,
     })
       .select("name category tag slug images variants")
       .lean();
 
-    // Flatten products + variants into single array
     let allProducts = [];
 
     products.forEach((product) => {
-      const productId = product._id.toString(); // Product ID for all variants
+      const productId = product._id.toString();
 
-      // Main product (if it has no variants or first variant)
-      const firstActiveVariant = product.variants?.find(v => v.isActive) || product.variants?.[0];
-      
-      if (firstActiveVariant || product.variants?.length === 0) {
-        const sellingPrice = firstActiveVariant?.price?.sellingPrice || 0;
-        const mrp = firstActiveVariant?.price?.mrp || 0;
-        const quantity = firstActiveVariant?.stock?.quantity || 0;
+      // ── Only iterate variants — no parent product entry ──────────────────
+      // If a product has NO variants at all, skip it entirely.
+      if (!product.variants?.length) return;
 
-        const normalizedProductCategory = normalize(product.category);
+      product.variants.forEach((variant, variantIndex) => {
+        // Skip inactive variants
+        if (!variant.isActive) return;
 
+        const sellingPrice = variant.price?.sellingPrice || 0;
+        const mrp          = variant.price?.mrp          || 0;
+        const quantity     = variant.stock?.quantity     || 0;
+
+        const normalizedCategory = normalize(product.category);
+
+        // ── Best offer for this variant ──────────────────────────────────
         const matchedBanners = activeBanners
           .filter((banner) => {
-            if (banner.maxUses && banner.usedCount >= banner.maxUses) {
+            if (banner.maxUses != null && banner.usedCount >= banner.maxUses) {
               return false;
             }
-
             if (banner.appliesTo === "all") return true;
-
-            if (banner.appliesTo === "products") {
-              return (banner.productIds || [])
-                .map(String)
-                .includes(productId);
+            if (banner.appliesTo === "products" || banner.appliesTo === "product") {
+              return (banner.productIds || []).map(String).includes(productId);
             }
-
             if (banner.appliesTo === "category") {
-              return (banner.categoryIds || [])
-                .map(normalize)
-                .includes(normalizedProductCategory);
+              return (banner.categoryIds || []).map(normalize).includes(normalizedCategory);
             }
-
             return false;
           })
           .map((banner) => {
@@ -760,165 +860,80 @@ router.get("/products/list", async (req, res) => {
                 : banner.discount;
 
             return {
-              bannerId: banner._id,
-              title: banner.title,
-              description: banner.description || "",
-              discount: banner.discount,
-              discountType: banner.discountType,
+              bannerId:        banner._id,
+              title:           banner.title,
+              description:     banner.description || "",
+              discount:        banner.discount,
+              discountType:    banner.discountType,
               effectiveDiscount,
-              endDate: banner.endDate,
-              image: banner.image || null,
+              endDate:         banner.endDate,
+              image:           banner.image || null,
             };
           })
           .sort((a, b) => b.effectiveDiscount - a.effectiveDiscount);
 
         const bestOffer = matchedBanners[0] || null;
 
-        // Add MAIN product
+        // ── Image: variant-own first, fall back to product image ───────────
+        const image =
+          variant.images?.[0]?.url ||   // variant has its own image
+          product.images?.[0]?.url  ||   // fall back to product main image
+          "";
+
+        // ── Variant display name ───────────────────────────────────────────
+        const attrParts = [
+          variant.attributes?.shade && `(${variant.attributes.shade})`,
+          variant.attributes?.size  && `(${variant.attributes.size})`,
+        ].filter(Boolean).join(" ");
+
+        const name = attrParts
+          ? `${product.name} ${attrParts}`.trim()
+          : product.name;
+
         allProducts.push({
-          _id: product._id, // Product ID
-          productId: productId, // NEW - Always product ID
-          isVariant: false,
-          variantIndex: null,
-          sku: product.sku || `${product.name.split(' ')[0]}-DEFAULT`,
-          name: product.name,
-          category: product.category,
-          tag: product.tag,
-          slug: product.slug,
-          image: product.images?.[0]?.url || "",
+          _id:          product._id,   // always the parent product ID
+          productId,                   // string version
+          isVariant:    true,
+          variantIndex,                // used by cart / detail page
+          sku:          variant.sku || `${product.name.split(" ")[0]}-${variantIndex}`,
+          name,
+          category:     product.category,
+          tag:          product.tag,
+          slug:         `${product.slug}?variant=${variantIndex}`,
+          image,
           mrp,
           sellingPrice,
           quantity,
-          isFeatured: firstActiveVariant?.isFeatured || false,
-          isBestseller: firstActiveVariant?.isBestseller || false,
-          isNewest: firstActiveVariant?.isNewest || false,
-          isLimited: firstActiveVariant?.isLimited || false,
+          isFeatured:   variant.isFeatured   || false,
+          isBestseller: variant.isBestseller || false,
+          isNewest:     variant.isNewest     || false,
+          isLimited:    variant.isLimited    || false,
           bestOffer,
-          sortWeight: 0,
+          sortWeight:   Math.random(),
         });
-      }
-
-      // Add individual ACTIVE variants - SAME PRODUCT ID
-      if (product.variants) {
-        product.variants.forEach((variant, variantIndex) => {
-          // Only active variants
-          if (!variant.isActive) return;
-
-          const sellingPrice = variant.price?.sellingPrice || 0;
-          const mrp = variant.price?.mrp || 0;
-          const quantity = variant.stock?.quantity || 0;
-
-          const normalizedProductCategory = normalize(product.category);
-
-          const matchedBanners = activeBanners
-            .filter((banner) => {
-              if (banner.maxUses && banner.usedCount >= banner.maxUses) {
-                return false;
-              }
-
-              if (banner.appliesTo === "all") return true;
-
-              if (banner.appliesTo === "products") {
-                return (banner.productIds || [])
-                  .map(String)
-                  .includes(productId);
-              }
-
-              if (banner.appliesTo === "category") {
-                return (banner.categoryIds || [])
-                  .map(normalize)
-                  .includes(normalizedProductCategory);
-              }
-
-              return false;
-            })
-            .map((banner) => {
-              const effectiveDiscount =
-                banner.discountType === "percentage"
-                  ? (sellingPrice * banner.discount) / 100
-                  : banner.discount;
-
-              return {
-                bannerId: banner._id,
-                title: banner.title,
-                description: banner.description || "",
-                discount: banner.discount,
-                discountType: banner.discountType,
-                effectiveDiscount,
-                endDate: banner.endDate,
-                image: banner.image || null,
-              };
-            })
-            .sort((a, b) => b.effectiveDiscount - a.effectiveDiscount);
-
-          const bestOffer = matchedBanners[0] || null;
-
-          // Variant image priority: variant.images[0] > product.images[0]
-          const variantImage = variant.images?.[0]?.url;
-          const image = variantImage || product.images?.[0]?.url || "";
-
-          allProducts.push({
-            _id: product._id, // NEW - SAME PRODUCT ID for variants too
-            productId: productId, // NEW - Always product ID
-            isVariant: true,
-            variantIndex, // Differentiator
-            sku: variant.sku || `${product.name.split(' ')[0]}-${variant.attributes?.shade || variant.attributes?.size || 'DEFAULT'}`,
-            name: `${product.name} ${variant.attributes?.shade ? `(${variant.attributes.shade})` : ''} ${variant.attributes?.size ? `(${variant.attributes.size})` : ''}`.trim(),
-            category: product.category,
-            tag: product.tag,
-            slug: `${product.slug}?variant=${variantIndex}`,
-            image,
-            mrp,
-            sellingPrice,
-            quantity,
-            isFeatured: variant.isFeatured || false,
-            isBestseller: variant.isBestseller || false,
-            isNewest: variant.isNewest || false,
-            isLimited: variant.isLimited || false,
-            bestOffer,
-            sortWeight: Math.random(),
-          });
-        });
-      }
+      });
     });
 
-    // Sort: Featured > Bestseller > Newest > Limited > Random
+    // ── Sort: Featured > Bestseller > Newest > Limited > Random ───────────
     allProducts.sort((a, b) => {
-      // Featured products/variants first
-      if (a.isFeatured !== b.isFeatured) {
-        return b.isFeatured ? 1 : -1;
-      }
-      
-      // Bestsellers next
-      if (a.isBestseller !== b.isBestseller) {
-        return b.isBestseller ? 1 : -1;
-      }
-      
-      // Newest next
-      if (a.isNewest !== b.isNewest) {
-        return b.isNewest ? 1 : -1;
-      }
-      
-      // Limited next
-      if (a.isLimited !== b.isLimited) {
-        return b.isLimited ? 1 : -1;
-      }
-      
-      // Rest: RANDOM ORDER
+      if (a.isFeatured   !== b.isFeatured)   return b.isFeatured   ? 1 : -1;
+      if (a.isBestseller !== b.isBestseller) return b.isBestseller ? 1 : -1;
+      if (a.isNewest     !== b.isNewest)     return b.isNewest     ? 1 : -1;
+      if (a.isLimited    !== b.isLimited)    return b.isLimited    ? 1 : -1;
       return b.sortWeight - a.sortWeight;
     });
 
     return res.status(200).json({
-      success: true,
-      message: "Products fetched successfully",
-      data: allProducts,
+      success:  true,
+      message:  "Products fetched successfully",
+      data:     allProducts,
     });
+
   } catch (error) {
     console.error("Error fetching product list:", error);
-
     return res.status(500).json({
-      success: false,
-      message: "Failed to fetch products",
+      success:  false,
+      message:  "Failed to fetch products",
     });
   }
 });
@@ -1055,9 +1070,19 @@ router.get("/admin/products", async (req, res) => {
 
     // ── With stock filter — aggregation, but $$ROOT preserves all fields ──────
     const stockMatch =
-      stock === "low"    ? { $match: { "variants.stock.quantity": { $lt: 5 } } }
-    : stock === "medium" ? { $match: { "variants.stock.quantity": { $gte: 5, $lte: 20 } } }
-    : stock === "high"   ? { $match: { "variants.stock.quantity": { $gt: 20 } } }
+  stock === "low"
+    ? { $match: { "variants.stock.quantity": { $lt: 11 } } }
+    : stock === "medium"
+    ? {
+        $match: {
+          "variants.stock.quantity": {
+            $gte: 11,
+            $lte: 50,
+          },
+        },
+      }
+    : stock === "high"
+    ? { $match: { "variants.stock.quantity": { $gt: 50 } } }
     : null;
 
     const pipeline = [
@@ -1297,7 +1322,9 @@ router.get("/products/:id", async (req, res) => {
       isActive: true,
       $or: [
         { category: { $regex: `^${product.category}$`, $options: "i" } },
-        { tag: { $regex: `^${product.tag}$`, $options: "i" } }
+        { tag: { $regex: `^${product.tag}$`, $options: "i" } },
+        { subCategory: { $regex: `^${product.subCategory}$`, $options: "i" } }
+
       ]
     })
       .limit(8)

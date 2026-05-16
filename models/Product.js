@@ -18,11 +18,34 @@ const imageSchema = new mongoose.Schema(
 // Skincare-specific ingredient entry
 const ingredientSchema = new mongoose.Schema(
   {
-    name:        { type: String, required: true, trim: true },
-    inci:        { type: String, trim: true },
-    percentage:  { type: Number, min: 0, max: 100 },
-    isKeyActive: { type: Boolean, default: false },
-    benefit:     { type: String, trim: true },
+    name: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+
+    description: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    image: {
+      url: {
+        type: String,
+        default: "",
+      },
+
+      public_id: {
+        type: String,
+        default: "",
+      },
+
+      altText: {
+        type: String,
+        default: "",
+      },
+    },
   },
   { _id: false }
 );
@@ -308,7 +331,7 @@ const productSchema = new mongoose.Schema(
 
     isFreeShipping: { type: Boolean, default: false },
     hsn:            { type: String, trim: true },
-    taxRate:        { type: Number, default: 18, enum: [0, 5, 12, 18, 28] },
+    taxRate:        { type: Number, default: 18, enum: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28] },
 
     // ── Ratings ───────────────────────────────────────────────────────────────
     ratings: {
@@ -406,7 +429,10 @@ productSchema.virtual("priceRange").get(function () {
 
 productSchema.virtual("keyIngredients").get(function () {
   if (!Array.isArray(this.ingredients)) return [];
-  return this.ingredients.filter((i) => i.isKeyActive).map((i) => i.name);
+
+  return this.ingredients
+    .slice(0, 4)
+    .map((i) => i.name);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

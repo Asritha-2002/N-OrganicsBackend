@@ -6,7 +6,7 @@ const jwt = require('jsonwebtoken');
 const User=require('../models/User')
 const {validate}=require('../middleware/validate')
 const {userSchemas} =require('../validation/schemas')
-const {sendVerificationEmail, sendPasswordResetEmail}=require('../config/email')
+const {sendVerificationEmail, sendPasswordResetEmail, sendContactEmail}=require('../config/email')
 const { auth } = require('../middleware/auth');
 const mongoose = require("mongoose");
 // const User = require('../models/User');
@@ -681,8 +681,6 @@ router.put("/addresses/:addressId", auth, async (req, res) => {
   }
 });
 
-
-// DELETE address
 // DELETE address
 router.delete("/addresses/:addressId", auth, async (req, res) => {
   try {
@@ -722,6 +720,34 @@ router.delete("/addresses/:addressId", auth, async (req, res) => {
     console.error("Delete address error:", error);
     return res.status(500).json({
       message: "Server Error",
+      error: error.message,
+    });
+  }
+});
+
+router.post("/contact", async (req, res) => {
+  try {
+    const { name, email, description } = req.body;
+
+    if (!name || !email || !description) {
+      return res.status(400).json({
+        success: false,
+        message: "Name, email, and description are required",
+      });
+    }
+
+    await sendContactEmail({ name, email, description });
+
+    return res.status(200).json({
+      success: true,
+      message: "Your message has been sent successfully",
+    });
+  } catch (error) {
+    console.error("Contact form error:", error.message);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to send message",
       error: error.message,
     });
   }

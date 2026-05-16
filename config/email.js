@@ -39,7 +39,7 @@ const sendVerificationEmail = async (email, verificationToken) => {
     to: email,
     subject: "Email Verification",
     html: `
-    <img src="${process.env.COMPANY_LOGO}" alt="Logo" style="width: 150px; height: auto;"/>
+    <img src="${process.env.COMPANY_LOGO}" alt="Logo" style="width: 200px; height: 30px;"/>
       <h2>Verify your email address</h2>
       <p>Click the link below to verify your email:</p>
       <a href="${verifyLink}">Verify Email</a>
@@ -60,7 +60,7 @@ const sendPasswordResetEmail = async (email, resetToken) => {
     to: email,
     subject: 'Reset Your Password - ' + process.env.COMPANY_NAME,
     html: `
-     <img src="${process.env.COMPANY_LOGO}" alt="Logo" style="width: 150px; height: auto;"/>
+     <img src="${process.env.COMPANY_LOGO}" alt="Logo" style="width: 200px; height: 30px;"/>
       <h1>Reset Your Password</h1>
       <p>Please click the link below to reset your password:</p>
       <a href="${process.env.BASE_URL}forgot-password-reset?token=${resetToken}">
@@ -78,7 +78,35 @@ const sendPasswordResetEmail = async (email, resetToken) => {
     throw new Error('Failed to send password reset email');
   }
 };
+
+const sendContactEmail = async ({ name, email, description }) => {
+  const mailOptions = {
+    from: `"${process.env.COMPANY_NAME}" <${process.env.EMAIL_USER}>`,
+    to: process.env.CONTACT_RECEIVER_EMAIL, // the mail where you want to receive contact form messages
+    subject: `New Contact Form Message from ${name}`,
+    html: `
+      <div style="font-family: Arial, sans-serif; line-height: 1.6;">
+        <img src="${process.env.COMPANY_LOGO}" alt="Logo" style="width: 200px; height: 30px; margin-bottom: 16px;" />
+        <h2>New Contact Form Submission</h2>
+        <p><strong>Name:</strong> ${name}</p>
+        <p><strong>Email:</strong> ${email}</p>
+        <p><strong>Message:</strong></p>
+        <div style="padding: 12px; background: #f7f7f7; border-radius: 8px; white-space: pre-line;">
+          ${description}
+        </div>
+      </div>
+    `,
+  };
+
+  try {
+    await sendEmailViaAPI(mailOptions);
+  } catch (error) {
+    console.error("Send contact email error:", error.message);
+    throw new Error("Failed to send contact email");
+  }
+};
 module.exports = {
   sendVerificationEmail,  
-  sendPasswordResetEmail
+  sendPasswordResetEmail,
+  sendContactEmail
 };
