@@ -39,7 +39,7 @@ const sendVerificationEmail = async (email, verificationToken) => {
     to: email,
     subject: "Email Verification",
     html: `
-    <img src="${process.env.COMPANY_LOGO}" alt="Logo" style="width: 200px; height: 30px;"/>
+    <img src="${process.env.COMPANY_LOGO}" alt="Logo" style="width: 200px; height: auto;"/>
       <h2>Verify your email address</h2>
       <p>Click the link below to verify your email:</p>
       <a href="${verifyLink}">Verify Email</a>
@@ -60,7 +60,7 @@ const sendPasswordResetEmail = async (email, resetToken) => {
     to: email,
     subject: 'Reset Your Password - ' + process.env.COMPANY_NAME,
     html: `
-     <img src="${process.env.COMPANY_LOGO}" alt="Logo" style="width: 200px; height: 30px;"/>
+     <img src="${process.env.COMPANY_LOGO}" alt="Logo" style="width: 200px; height: auto;"/>
       <h1>Reset Your Password</h1>
       <p>Please click the link below to reset your password:</p>
       <a href="${process.env.BASE_URL}forgot-password-reset?token=${resetToken}">
@@ -86,7 +86,7 @@ const sendContactEmail = async ({ name, email, description }) => {
     subject: `New Contact Form Message from ${name}`,
     html: `
       <div style="font-family: Arial, sans-serif; line-height: 1.6;">
-        <img src="${process.env.COMPANY_LOGO}" alt="Logo" style="width: 200px; height: 30px; margin-bottom: 16px;" />
+        <img src="${process.env.COMPANY_LOGO}" alt="Logo" style="width: 200px; height: auto;" />
         <h2>New Contact Form Submission</h2>
         <p><strong>Name:</strong> ${name}</p>
         <p><strong>Email:</strong> ${email}</p>
